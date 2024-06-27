@@ -1,16 +1,36 @@
 const whatJs = {
-    isInsert: child => ["string","boolean","number"].includes(typeof child),
+    isInsert: child => ["string","boolean","number"].includes(typeof child), isObject: obj => typeof obj === 'object' && !Array.isArray(obj),
     addChild: (el, child) => whatJs.isInsert(child) ? el.insertAdjacentHTML("beforeend", child) : el.appendChild(child),
-    isObject: obj => typeof obj === 'object' && !Array.isArray(obj),
+    isInput: node => ["INPUT", "TEXTAREA", "SELECT"].includes(node.nodeName), isTextInput: node => ["INPUT","TEXTAREA"].includes(node.nodeName),
     dom: new Proxy({registry: new Map()}, {
         get: (obj, key) => (props = {}, children = [], events = {}) => {
             if(key === 'register') return obj.registry.set(props.name, props); if(key in Object.getOwnPropertyDescriptors(obj)) return obj[key];
             var el = document.createElement(key);
             if ((props instanceof Array) || (props instanceof Element) || whatJs.isInsert(props)) events = children, children = props;
-            else Object.keys(props).filter(attr => !['disabled', 'checkbox'].includes(attr)).forEach(attr => el.setAttribute(attr, props[attr]));
+            else {
+                Object.keys(props).filter(attr => !['disabled', 'checkbox', 'render', 'model', 'converter', 'wait'].includes(attr)).forEach(attr => el.setAttribute(attr, props[attr]));
+                if(props.modelkey && props.model && whatJs.isInput(el)) {
+                    el.value = props.model[props.modelkey];
+                    el.addEventListener('change', (evt) => {if(!props.model._dirty) props.model.dirty(el);props.model[props.modelkey] = el.getAttribute('type') === 'checkbox' ? evt.target.checked : props.converter ? props.converter(evt.target.value) : evt.target.value; events?.update && events.update(evt, el);});
+                    whatJs.isTextInput(el) && el.addEventListener('input', (evt) => {if(!props.model._dirty) props.model.dirty(el);props.model[props.modelkey] = props.converter ? props.converter(evt.target.value) : evt.target.value; events?.update && events.update(evt, el);})
+                }
+            }
             if(obj.registry.has(key)) return el.appendChild(obj.registry.get(key)(children, events)).parentElement;
-            Array.isArray(children) ? children.forEach(child => whatJs.addChild(el, child)) : whatJs.addChild(el, children);
+            if(props?.wait) {
+                el.appendChild(props?.wait[1]);
+                props.wait[0].then(()=>{
+                    props.wait[1].remove();
+                    Array.isArray(children) ? children.forEach(child => whatJs.addChild(el, child)) : whatJs.addChild(el, children);
+                }).catch(() => {
+                    props.wait[1].remove();
+                    props.wait?.[2] && el.appendChild(props.wait[2]);
+                })
+            } else {
+                Array.isArray(children) ? children.forEach(child => whatJs.addChild(el, child)) : whatJs.addChild(el, children);
+            }
+            
             for(let eventName in events) el.addEventListener(eventName, (e) => events[eventName](e, el));
+            if(props?.render) document.querySelector(props.render)[(props?.append ? 'appendChild' : 'replaceChildren')](el);
             return el;
         }
     }),
@@ -33,6 +53,7 @@ const whatJs = {
     model: new Proxy({_models: {}, _makeModel: function(inputData, schema={}, _dirty=false){
         let dirty = _dirty;
         let subscribers = new Map();
+        let dirtyNode = null;
         function validate(object, schema, path='') {
             let failedFields = [];
             if(Array.isArray(schema))
@@ -50,17 +71,18 @@ const whatJs = {
         }
         return new Proxy(inputData, {
             get: function(target, prop, receiver) {
-                if(prop === 'dirty') return () => dirty = structuredClone(target);
-                if(prop === 'clean') return () => dirty = false;
+                if(!!dirty && !dirtyNode?.parentNode) {dirtyNode = null; dirty = false;}
+                if(prop === 'dirty') return (el=null) => {dirty = structuredClone(target); dirtyNode = el;};
+                if(prop === 'clean') return () => {dirty = false; dirtyNode = null;}
                 if(prop === '_dirty') return dirty;
                 if(prop === 'subscribe') return (subscriber, fnArg) => subscribers.set(subscriber, fnArg);
                 if(prop === 'validate') {
-                    return (makePromise=false) => {
+                    return (updateModel=true, makePromise=false) => {
                         if(!dirty) return makePromise ? Promise.resolve(true) : true;
                         let failedFields = validate(dirty, schema);
-                        if(!failedFields.length) {
+                        if(!failedFields.length && updateModel) {
                             for(let key in dirty) target[key] = dirty[key];
-                            dirty = false; 
+                            dirty = false; dirtyNode = null;
                         }
                         return makePromise ? (!!failedFields.length ? Promise.reject(failedFields) : Promise.resolve(true)) : !!failedFields.length ? failedFields : true;
                     }
@@ -94,3 +116,12 @@ const whatJs = {
         set: function(whatProxy, modelName, modelData) {  whatProxy._models[modelName] = whatProxy._makeModel(modelData); }
     })
 };
+
+const dom = whatJs.dom;
+const whatModel = whatJs.model;
+const whatContext = whatJs.context;
+
+whatModel.test = {some: 'data'};
+dom.div({render:  'body'},[
+    dom.input({model: whatModel.test, modelkey: 'some'})
+])
