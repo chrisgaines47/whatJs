@@ -1,18 +1,29 @@
 const whatJs = {
-    isInsert: child => ["string","boolean","number"].includes(typeof child), isObject: obj => typeof obj === 'object' && !Array.isArray(obj),
+    isInsert: child => ["string","boolean","number"].includes(typeof child),
+    isObject: obj => typeof obj === 'object' && !Array.isArray(obj),
     addChild: (el, child) => whatJs.isInsert(child) ? el.insertAdjacentHTML("beforeend", child) : el.appendChild(child),
-    isInput: node => ["INPUT", "TEXTAREA", "SELECT"].includes(node.nodeName), isTextInput: node => ["INPUT","TEXTAREA"].includes(node.nodeName),
+    isInput: node => ["INPUT", "TEXTAREA", "SELECT"].includes(node.nodeName),
+    isTextInput: node => ["INPUT","TEXTAREA"].includes(node.nodeName),
+
     dom: new Proxy({registry: new Map()}, {
         get: (obj, key) => (props = {}, children = [], events = {}) => {
-            if(key === 'register') return obj.registry.set(props.name, props); if(key in Object.getOwnPropertyDescriptors(obj)) return obj[key];
+            if(key === 'register') return obj.registry.set(props.name, props);
+            if(key in Object.getOwnPropertyDescriptors(obj)) return obj[key];
             var el = document.createElement(key);
             if ((props instanceof Array) || (props instanceof Element) || whatJs.isInsert(props)) events = children, children = props;
             else {
-                Object.keys(props).filter(attr => !['disabled', 'checkbox', 'render', 'model', 'converter', 'wait'].includes(attr)).forEach(attr => el.setAttribute(attr, props[attr]));
+                Object.keys(props).filter(attr => !['disabled', 'checkbox', 'render', 'model', 'converter', 'wait', 'dirty'].includes(attr) && typeof props[attr] !== 'object').forEach(attr =>
+                    el.setAttribute(attr, props[attr]));
                 if(props.modelkey && props.model && whatJs.isInput(el)) {
                     el.value = props.model[props.modelkey];
-                    el.addEventListener('change', (evt) => {if(!props.model._dirty) props.model.dirty(el);props.model[props.modelkey] = el.getAttribute('type') === 'checkbox' ? evt.target.checked : props.converter ? props.converter(evt.target.value) : evt.target.value; events?.update && events.update(evt, el);});
-                    whatJs.isTextInput(el) && el.addEventListener('input', (evt) => {if(!props.model._dirty) props.model.dirty(el);props.model[props.modelkey] = props.converter ? props.converter(evt.target.value) : evt.target.value; events?.update && events.update(evt, el);})
+                    el.addEventListener('change', (evt) => {
+                        if(props?.dirty) props.model.dirty(el);
+                        props.model[props.modelkey] = el.getAttribute('type') === 'checkbox' ? evt.target.checked : props.converter ? props.converter(evt.target.value) : evt.target.value; events?.update && events.update(evt, el);
+                    });
+                    whatJs.isTextInput(el) && el.addEventListener('input', (evt) => {
+                        if(props?.dirty) props.model.dirty(el);
+                        props.model[props.modelkey] = props.converter ? props.converter(evt.target.value) : evt.target.value; events?.update && events.update(evt, el);
+                    });
                 }
             }
             if(obj.registry.has(key)) return el.appendChild(obj.registry.get(key)(children, events)).parentElement;
@@ -24,7 +35,7 @@ const whatJs = {
                 }).catch(() => {
                     props.wait[1].remove();
                     props.wait?.[2] && el.appendChild(props.wait[2]);
-                })
+                });
             } else {
                 Array.isArray(children) ? children.forEach(child => whatJs.addChild(el, child)) : whatJs.addChild(el, children);
             }
@@ -34,6 +45,7 @@ const whatJs = {
             return el;
         }
     }),
+
     context: new Proxy({_contexts: {}}, {
         get: function(whatProxy, contextName){
             whatProxy._contexts[contextName] ??= new Proxy({name: contextName, actions: new Map(), data: {},
@@ -50,6 +62,7 @@ const whatJs = {
             return context;
         }
     }),
+
     model: new Proxy({_models: {}, _makeModel: function(inputData, schema={}, _dirty=false){
         let dirty = _dirty;
         let subscribers = new Map();
@@ -114,14 +127,17 @@ const whatJs = {
             return whatProxy._models[modelName];
         },
         set: function(whatProxy, modelName, modelData) {  whatProxy._models[modelName] = whatProxy._makeModel(modelData); }
+    }),
+    css: new Proxy({_sheets: {}}, {
+        get: function(whatSheet, sheetName) {
+            return whatSheet._sheets[sheetName];
+        },
+        set: function(whatSheet, sheetName, cssRule) {
+            if (!whatSheet._sheets?.[sheetName]) {
+                whatSheet._sheets[sheetName] ??= new CSSStyleSheet();
+                document.adoptedStyleSheets.push(whatSheet._sheets[sheetName]);
+            }
+            whatSheet._sheets[sheetName].replaceSync(cssRule);
+        }
     })
 };
-
-const dom = whatJs.dom;
-const whatModel = whatJs.model;
-const whatContext = whatJs.context;
-
-whatModel.test = {some: 'data'};
-dom.div({render:  'body'},[
-    dom.input({model: whatModel.test, modelkey: 'some'})
-])
