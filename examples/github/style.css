@@ -1,0 +1,9 @@
+.AppHeader .AppHeader-globalBar {
+    display: flex;
+    padding: var(--base-size-16, var(--base-size-16));
+    gap: var(--base-size-12, 12px);
+}
+
+.pb-2 {
+    padding-bottom: var(--base-size-8, 8px) !important;
+}

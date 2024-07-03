@@ -28,17 +28,14 @@ const whatJs = {
                 }
             }
             if(obj.registry.has(key)) return el.appendChild(obj.registry.get(key)(children, events)).parentElement;
+            
+            Array.isArray(children) ? children.forEach(child => whatJs.addChild(el, child)) : whatJs.addChild(el, children);
             if(props?.wait) {
-                el.appendChild(props?.wait[1]);
-                props.wait[0].then(()=>{
-                    props.wait[1].remove();
-                    Array.isArray(children) ? children.forEach(child => whatJs.addChild(el, child)) : whatJs.addChild(el, children);
-                }).catch(() => {
-                    props.wait[1].remove();
-                    props.wait?.[2] && el.appendChild(props.wait[2]);
-                });
-            } else {
-                Array.isArray(children) ? children.forEach(child => whatJs.addChild(el, child)) : whatJs.addChild(el, children);
+                props.wait[0].then(
+                    (result) => el.replaceChildren(props.wait[1](result))
+                ).catch(
+                    (err) => props.wait[2] && el.replaceChildren(props.wait[2](err))
+                )
             }
             
             for(let eventName in events) el.addEventListener(eventName, (e) => events[eventName](e, el));
@@ -154,12 +151,23 @@ dom.register(
             dom.div({style: 'height: 36px; flex-grow: .9'},[
                 'Logo and title'
             ]),
-            dom.Search({style: 'height: 36px;position: relative'})
+            dom.Search({style: 'height: 36px;position: relative'},[
+
+            ])
         ])
 });
 
 function Search() {
     whatModel.search = {searchInput: ''};
+
+    function searchSuggestions(input) {
+        let suggestionRow = prompt => dom.div({class: 'suggestion-row'}, dom.span([input]));
+        return new Promise((resolve, reject) => {
+            setTimeout(() => {
+                resolve([suggestionRow(input), suggestionRow(input)])
+            })
+        })
+    }
 
     return dom.div({id: 'search'}, [
         dom.div({id: 'search-inline'}, [
@@ -170,13 +178,19 @@ function Search() {
                 update: (evt) => {
                     let input = evt.target.value;
                     dom.query('search').classList[input.length > 0 ? 'add': 'remove']('expanded');
+                    if(input.length > 0) {
+                        dom.div({render: '#search-expanded-container', wait: [searchSuggestions(input), ]}, [
+                            dom.div('loading')
+                        ]);
+                    }
                 }
             })
         ]),
-        dom.div({id: 'search-expanded-container', style: 'height: 36px'},['hi'])
+        dom.div({id: 'search-expanded-container', style: 'height: 36px'},[])
     ])
 
 }
+
 dom.register(Search);
 
 dom.div({render: 'body'}, [

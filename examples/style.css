@@ -29,7 +29,8 @@ body {
 
 search.expanded #search{
     left: 400px;
-    top: 16px
+    top: 16px;
+    outline: solid #32a1ce;
 }
 
 #search-inline {
