@@ -43,11 +43,9 @@ whatJs is easy to write and understand, without needing to change the way you co
 wh
 
 ## Examples
-### Github
-This section walks through building this page you are currently on (github.com) in whatJs
-
 <details>
-  <summary><strong>Building the header</strong></summary>
+  <summary><strong>Github</strong></summary>
+  This section walks through building this page you are currently on (github.com) in whatJs
  
   <div style="margin:10px 0">Lets write components for the different parts of the header.</div>
   <img style="margin-bottom: 10px" src="examples/github/what/header.png">
@@ -57,64 +55,56 @@ This section walks through building this page you are currently on (github.com) 
   <div>4. PageNav -> Page navigation</div>
   <div>5. VertNav -> Vertical navigation<div>
 
-  <div style="margin:20px">
+  <div style="margin:10px">
+  css:
+  #link-nav {
+    flex: 1 1 auto;
+      display: flex;
+      gap: var(--base-size-8, 8px);
+  }
   <details>
   <summary>Core App Structure</summary>
 
 
-    /**
-        Divide out our different logical header sections into their own component. Any function is valid as a whatJs component As long as it returns
-        a valid HTML Element when called. Register with dom.register(componentName)
-    */
     function LinkNav() {
-      return dom.div({id: 'links'}, 'links')
+
+      return dom.div({id: 'link-nav'}, [
+        dom.div({id: 'vert-nav-link'}, [
+
+        ]),
+        dom.div({id: 'dashboard-link'}, [
+
+        ])
+      ])
     }
 
-    // Arrow syntx works, as does passing arguments.
-    let SearchNav = (name='search') => dom.div({id: name}, name');
+    function SearchNav() {
 
-    // Register components inline.
-    dom.register(function ActionNav() {
-      return dom.div({id: 'actions'}, 'actions)
-    });
+      return dom.div();
+    }
 
-    let PageNav = () => Search('pages');
+    function ActionNav() {
 
-    // We can hard code elements as well, we then just dont register then with whatJs and just insert inline like below
-    let VertNav = dom.div({id: 'vert'});
+      return dom.div();
+    }
 
-    // note we dont need to pass Actions as it was registered inline
-    dom.register([LinkNav, SearchNav, PageNav]);
+    function PageNav() {
 
-    // create any dom element while supplying a render target to create the element and render it there
+      return dom.div();
+    }
+
+    function VertNav() {
+
+      return dom.div();
+    }
+
     dom.div({render: 'body', id: 'header'},[
-      dom.LinkNav(),
+      LinkNav(),
       dom.SearchNav(),
       dom.ActionNav(),
       dom.PageNav(),
-      VertNav
+      dom.VertNav()
     ])
   </details>
   </div>
-
-
-
-  <details>
-    <summary>Nested Code</summary>
-
-    ```
-    CODE!
-    ```
-  </details>
 </details>
-## Specification
-Example text blah. Example text blah. Example text blah. Example text blah. 
-Example text blah. Example text blah. Example text blah. Example text blah. 
-Example text blah. Example text blah. Example text blah. Example text blah. 
-Example text blah. Example text blah. 
-
-## Dependencies Title
-Example text blah. Example text blah. Example text blah. Example text blah. 
-Example text blah. Example text blah. Example text blah. Example text blah. 
-Example text blah. Example text blah. Example text blah. Example text blah. 
-Example text blah. Example text blah.
