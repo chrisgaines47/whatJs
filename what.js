@@ -5,15 +5,16 @@ const whatJs = {
     isInput: node => ["INPUT", "TEXTAREA", "SELECT"].includes(node.nodeName),
     checkInsertable: arg => (arg instanceof Array) || (arg instanceof Element) || whatJs.isInsert(arg),
 
-    dom: new Proxy({registry: new Map()}, {
+    dom: new Proxy({registry: new Map(), tags: new Map()}, {
         get: (o, key) => (props = {}, children = [], events = {}) => {
             if(key === 'query') return document.getElementById(props) ?? document.querySelectorAll(props).length === 1 ?
                 document.querySelector(props) : Array.from(document.querySelectorAll(props));
             if(key === 'register') return o.registry.set(props.name, props);
-
+            if(key === 'tag') return o.tags.set(props, [children, events]);
             let el = document.createElement(key);
+            if(props?.tags) {let [attrs, evts] = o.tags.get(props.tags); debugger; Object.assign(props, attrs); Object.assign(events, evts);debugger; }
             if (whatJs.checkInsertable(props)) events = children, children = props;
-            else Object.keys(props).filter(attr => !['disabled', 'checkbox', 'wait','rerender']
+            else Object.keys(props).filter(attr => !['disabled', 'checkbox', 'wait','rerender', 'tags']
                 .includes(attr) && typeof props[attr] !== 'object').forEach(attr => el.setAttribute(attr, props[attr]));
 
             if(props.modelkey && props.model && whatJs.isInput(el))
@@ -25,7 +26,7 @@ const whatJs = {
                 });
 
             if(props.rerender && props.model) props.model.subscribe(`${props.model.props.name}-${props?.id || 'noId'}-rerender`,
-                updateData => el.parentNode && el.parentNode.replaceChildren(props.rerender(updateData)));
+                updateData => document.body.contains(el.parentNode) && el.parentNode.replaceChildren(props.rerender(updateData)));
 
             props?.wait?.().then(props?.waitSuccess, props?.waitError).then(result => result && el.replaceChildren(result));
             for(let eventName in events) el.addEventListener(eventName, (e) => events[eventName](e, el));
@@ -78,7 +79,7 @@ const whatJs = {
                 }
                 if(failedFields.length === 0 && dirty) Object.assign(model, dirty) && receiver.clean();
                 else props.failedFields = failedFields;
-                if(!!dirty || key === 'schema' || key === 'name') return true;
+                if(!!dirty) return true;
                 let result = Reflect.set(model,key,value);
                 for(let [subscriber, fn] of subscribers.entries()) fn({model, key, value});
                 return (typeof result == 'object') ? whatJs.model._makeModel(result, schema?.[key] || {}) : result;
