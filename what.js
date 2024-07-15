@@ -12,7 +12,7 @@ const whatJs = {
             if(key === 'register') return o.registry.set(props.name, props);
             if(key === 'tag') return o.tags.set(props, [children, events]);
             let el = document.createElement(key);
-            if(props?.tags) {let [attrs, evts] = o.tags.get(props.tags); debugger; Object.assign(props, attrs); Object.assign(events, evts);debugger; }
+            if(props?.tags) {let [attrs, evts] = o.tags.get(props.tags); Object.assign(props, attrs); Object.assign(events, evts); }
             if (whatJs.checkInsertable(props)) events = children, children = props;
             else Object.keys(props).filter(attr => !['disabled', 'checkbox', 'wait','rerender', 'tags']
                 .includes(attr) && typeof props[attr] !== 'object').forEach(attr => el.setAttribute(attr, props[attr]));
