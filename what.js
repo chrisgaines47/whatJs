@@ -21,7 +21,10 @@ const whatJs = {
                 el.addEventListener('input', evt => {
                     let processedValue = el.getAttribute('type') === 'checkbox' ? evt.target.checked : evt.target.value;
                     props.model[props.modelkey] = processedValue;
-                    if(model.props.failedFields.includes(props.modelkey)) props?.updateError?.(el, props.modelkey, props.model, processedValue);
+                    if(model?.props?.failedFields.includes(props.modelkey)) {
+                        props?.updateError?.(el, props.modelkey, props.model, processedValue);
+                        props?.errorClass && el.classList.add(props.errorClass);
+                    }
                     else props?.updateSuccess?.(el, props.modelkey, props.model);
                 });
 
@@ -54,46 +57,72 @@ const whatJs = {
             return context;
         }
     }),
-    model: new Proxy({_models: {}, _makeModel: function(inputData, schema={}, _dirty=false) {
-        let dirty = _dirty, props = {}, subscribers = new Map();
+    model: new Proxy({_models: {},
+         _makeModel: function(inputData, schema={}, _dirty=false) {
+            let dirty = _dirty; let subscribers = new Map(); whatJs.props ??= new Map();
 
-        return new Proxy(inputData, {
-            get: function(target, prop, receiver) {
-                if(prop === '_dirty') return dirty; if(prop === 'props') return props;
-                if(prop === 'dirty') return () => dirty = structuredClone(target);
-                if(prop === 'clean') return () => dirty = false;
-                if(prop === 'subscribe') return (subscriber, fnArg) => fnArg ? subscribers.set(subscriber, fnArg) : subscribers.delete(subscriber);
-                let result = Reflect.get(target, prop, receiver);
-                return (typeof result == 'object') ? whatJs.model._makeModel(result, schema?.[prop] || {}, dirty?.[prop]) : result;
-            },
-            set: function(model, key, value, receiver) {
-                if(key === 'schema') schema = value; if(key === 'props') props = value;
-                if(['props','schema'].includes(key)) return true;
-                if(!dirty && !schema?.[key]?.(value)) receiver.dirty();
-                if(!!dirty) dirty[key] = value;
-                let failedFields = [];
-                for(let [key, fn] of Object.entries(schema)) {
-                    let result = fn(dirty ? dirty : key.startsWith('_') ? receiver : receiver[key]);
-                    if(!key.startsWith('_') && !result) failedFields.push(key);
-                    if(key.startsWith('_')) props[key] = result;
+            return new Proxy(inputData, {
+                get: function(target, prop, receiver) {
+                    if(prop === 'props') return whatJs.props.get(schema);
+                    if(prop === 'dirty') return function(isSet=false) {return (isSet && !dirty) ? dirty = structuredClone(target) : dirty;}
+                    if(prop === 'clean') return () => dirty = false;
+                    if(prop === 'subscribe') return (subscriber, fnArg) => fnArg ? subscribers.set(subscriber, fnArg) : subscribers.delete(subscriber);
+                    if(prop === 'resetValidState') return () => {
+                        whatJs.props.set(schema, {failedFields: []});
+                        for(let key in receiver) if(typeof receiver[key] === 'object') receiver[key].resetValidState();
+                    }
+                    if(prop ===  'validate') return function() {
+                        let props = whatJs.props.get(schema) || {failedFields: []};
+                        receiver.dirty(true);
+                        for(let key in schema) {
+                            if(typeof schema[key] === 'function') {
+                                if(!key.startsWith('_') && !schema[key](dirty[key])) props.failedFields.push(key);
+                                if(key.startsWith('_')) props[key] = schema[key](dirty, key, dirty[key]);
+                                whatJs.props.set(schema, props);
+                            } else if(typeof receiver[key] === 'object') receiver[key].validate();
+                        }
+                        if(props.failedFields.length === 0) Object.assign(target, dirty) && receiver.clean();
+                        return props.failedFields.length === 0;
+                    }
+                    let result = Reflect.get(target, prop, receiver);
+                    return (typeof result == 'object') ? whatJs.model._makeModel(result, schema?.[prop] || {}, dirty?.[prop]) : result;
+                },
+                set: function(model, key, value, receiver) {
+                    if(key === 'schema') { schema = value; receiver.resetValidState(); receiver.validate(); return true; }
+                    if(schema?.[key] && !schema?.[key]?.(value) && !model.dirty) receiver.dirty();
+                    (!!dirty ? dirty : model)[key] = value;
+                    receiver.resetValidState(); receiver.validate();
+                    for(let [subscriber, fn] of subscribers.entries()) fn({model, key, value});
+                    return (typeof result == 'object') ? whatJs.model._makeModel(result, schema?.[key] || {}, dirty) : true;
                 }
-                if(failedFields.length === 0 && dirty) Object.assign(model, dirty) && receiver.clean();
-                else props.failedFields = failedFields;
-                if(!!dirty) return true;
-                let result = Reflect.set(model,key,value);
-                for(let [subscriber, fn] of subscribers.entries()) fn({model, key, value});
-                return (typeof result == 'object') ? whatJs.model._makeModel(result, schema?.[key] || {}) : result;
-            }
-        })
+            })
     }}, {
-        get: function(whatProxy, modelName) {
-            if(modelName.startsWith('_')) return whatProxy[modelName];
-            if(!(modelName in whatProxy._models)) return false; 
-            return whatProxy._models[modelName];
-        },
-        set: function(whatProxy, modelName, modelData) {
-            whatProxy._models[modelName] = whatProxy._makeModel(modelData);
-            whatProxy._models[modelName].props.name = modelName;
-        }
+        get: (whatProxy, modelName) => modelName.startsWith('_') ? whatProxy[modelName] : whatProxy._models?.[modelName] || false,
+        set: (whatProxy, modelName, modelData) => whatProxy._models[modelName] = whatProxy._makeModel(modelData)
     })
 };
+
+let {dom, model} = whatJs;
+
+let a = {
+    a: 'a',
+    b: {
+        c: 'c',
+        d: 'd'
+    }
+};
+
+model.a = a;
+
+let schema = {
+    a: (val) => typeof val === 'string',
+    b: {
+        c: (val) => typeof val === 'string',
+        d: (val) => typeof val === 'number'
+    },
+    _isValid: (obj, key, val) => {
+        return 'hello'
+    }
+}
+
+model.a.schema = schema;
