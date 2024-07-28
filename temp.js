@@ -21,10 +21,7 @@ const whatJs = {
                 el.addEventListener('input', evt => {
                     let processedValue = el.getAttribute('type') === 'checkbox' ? evt.target.checked : evt.target.value;
                     props.model[props.modelkey] = processedValue;
-                    if(model?.props?.failedFields.includes(props.modelkey)) {
-                        props?.updateError?.(el, props.modelkey, props.model, processedValue);
-                        props?.errorClass && el.classList.add(props.errorClass);
-                    }
+                    if(model.props.failedFields.includes(props.modelkey)) props?.updateError?.(el, props.modelkey, props.model, processedValue);
                     else props?.updateSuccess?.(el, props.modelkey, props.model);
                 });
 
@@ -57,71 +54,95 @@ const whatJs = {
             return context;
         }
     }),
-    model: new Proxy({
-        _models: {},
-        _getHandler: function(target, prop, receiver) {
+    model: new Proxy({_models: {},
+        _makeModel: function(inputData) {
+            let props = {}; let dirty = false; whatJs.schemas ??= new Map(); let subscribers = new Map();
 
-        },
-        _setHandler: function(model, key, value, receiver) {
-        },
-        _makeModel: (inputData, path='model', isProcessing=true) => {
-            let isObject = typeof inputData === 'object';
-            let schema = {};
-            let proxifiedObj = isObject ? new Proxy(inputData, {
-                get: () => schema,
-                set: (model, prop, value, receiver) => {
-                    if(prop === 'schema') {
-                        schema = value;
-                        for(let key in receiver) {
-                            if(typeof receiver[key] === 'object' && schema?.[key])
-                                receiver[key].schema = schema[key];
-                        }
-                    }
-                    
-                    
-                }
-            }) : inputData;
-            isObject && Object.keys(inputData).forEach(key => proxifiedObj[key] = whatJs.model._makeModel(inputData[key], `${path}.${key}`));
-            isProcessing = false;
-            return proxifiedObj;
-
-            return new Proxy(inputData, {
+            let newModel = new Proxy(inputData, {
                 get: function(target, prop, receiver) {
-                    if(prop === 'props') return whatJs.props.get(schema);
+                    if(prop === 'props') return function(optData) { return !!optData ? props = optData : props; }
+                    if(prop === 'schema') return whatJs.schemas.get(newModel);
                     if(prop === 'dirty') return function(isSet=false) {return (isSet && !dirty) ? dirty = structuredClone(target) : dirty;}
                     if(prop === 'clean') return () => dirty = false;
                     if(prop === 'subscribe') return (subscriber, fnArg) => fnArg ? subscribers.set(subscriber, fnArg) : subscribers.delete(subscriber);
-                    if(prop === 'resetValidState') return () => {
-                        whatJs.props.set(schema, {failedFields: []});
-                        for(let key in receiver) if(typeof receiver[key] === 'object') receiver[key].resetValidState();
-                    }
-                    if(prop ===  'validate') return function() {
-                        let props = whatJs.props.get(schema) || {failedFields: []};
-                        receiver.dirty(true);
-                        for(let key in schema) {
-                            if(typeof schema[key] === 'function') {
-                                if(!key.startsWith('_') && !schema[key](dirty[key])) props.failedFields.push(key);
-                                if(key.startsWith('_')) props[key] = schema[key](dirty, key, dirty[key]);
-                                whatJs.props.set(schema, props);
-                            } else if(typeof receiver[key] === 'object') receiver[key].validate();
+                    if(prop ===  'validate') return () => {
+                        receiver.dirty(true); let failedFields = [];
+                        for(let [key, fn] of Object.entries(whatJs.schemas.get(newModel))) {
+                            if(typeof fn === 'object' && typeof receiver[key] === 'object') receiver[key].validate();
+                            else {
+                                let result = fn(dirty[key]);
+                                if(!key.startsWith('_') && !result) failedFields.push(key);
+                                if(key.startsWith('_')) props[key] = result;
+                            }
+                            if(failedFields.length === 0) Object.assign(target, dirty) && receiver.clean();
+                            else  props.failedFields = failedFields;
+                            return failedFields.length === 0;
                         }
-                        if(props.failedFields.length === 0) Object.assign(target, dirty) && receiver.clean();
-                        return props.failedFields.length === 0;
                     }
-                    let result = Reflect.get(target, prop, receiver);
-                    return (typeof result == 'object') ? whatJs.model._makeModel(result, schema?.[prop] || {}, dirty?.[prop]) : result;
+                    if(prop === 'setSchema') return (_schema) => {
+                        whatJs.schemas.set(newModel, _schema);
+                        Object.keys(_schema).forEach(key => {
+                            if(typeof _schema[key] === 'object' && typeof receiver[key] === 'object')
+                                whatJs.schemas.set(receiver[key], schema[key]);
+                        });
+                        debugger;
+                        receiver.validate();
+                    }
+                    if(prop.startsWith('_')) return receiver[prop];
+                    return Reflect.get(target, prop, receiver);
                 },
                 set: function(model, key, value, receiver) {
-                    if(key === 'schema') { schema = value; receiver.resetValidState(); receiver.validate(); return true; }
+                    if(whatJs.isProcessing) return false;
+                    if(key === 'props') props = value; if(key === 'schema') {whatJs.isProcessing = true; receiver.setSchema(value);whatJs.isProcessing = false; }
+                    if(['props','schema'].includes(key)) return true;
                     if(schema?.[key] && !schema?.[key]?.(value) && !model.dirty) receiver.dirty();
                     (!!dirty ? dirty : model)[key] = value;
-                    receiver.resetValidState(); receiver.validate();
                     for(let [subscriber, fn] of subscribers.entries()) fn({model, key, value});
-                    return (typeof result == 'object') ? whatJs.model._makeModel(result, schema?.[key] || {}, dirty) : true;
+                    return true;
                 }
-            })
-    }}, {
+            });
+            return newModel;
+        }
+    }, {
         get: (whatProxy, modelName) => modelName.startsWith('_') ? whatProxy[modelName] : whatProxy._models?.[modelName] || false,
-        set: (whatProxy, modelName, modelData) => whatProxy._models[modelName] = whatProxy._makeModel(modelData)
+        set: function(whatProxy, modelName, modelData) {
+            function setModel(model) {
+                let obj = whatJs.model._makeModel(model);
+                Object.keys(obj).forEach(key => {
+                    if(typeof obj[key] === 'object') {
+                        let result = setModel(obj[key]);
+                        console.log(result);
+                        obj[key] = result;
+                        console.log(obj[key]);
+                    }
+                });
+                return obj;
+            }
+            whatJs.isProcessing = true;
+            whatProxy._models[modelName] = setModel(modelData);
+            whatJs.isProcessing = false;
+            whatProxy._models[modelName].props.name = modelName;
+
+        }
     })
 };
+
+let {dom, model} = whatJs;
+
+model.a = {
+    a: 'a',
+    b: {
+        c: 'c',
+        d: 'd'
+    }
+};
+
+let schema = {
+    a: (val) => typeof val === 'string',
+    b: {
+        c: (val) => typeof val === 'string',
+        d: (val) => typeof val === 'number'
+    }
+}
+
+model.a.schema = schema;
