@@ -4,6 +4,10 @@ const whatJs = {
     addChild: (el, child) => whatJs.isInsert(child) ? el.insertAdjacentHTML("beforeend", child) : el.appendChild(child),
     isInput: node => ["INPUT", "TEXTAREA", "SELECT"].includes(node.nodeName),
     checkInsertable: arg => (arg instanceof Array) || (arg instanceof Element) || whatJs.isInsert(arg),
+    objProxy: (obj, _context) => new Proxy(obj, {
+        get: (target, key) => whatJs.isObj(target[key]) ? objProxy(target[key]) : target[key],
+        set: (target, key, value) => { target[key] = value; _context.subscribers.forEach((id, fn) => fn.deref()?.(target, key) || _context.subscribers.delete(id)); return true;}
+    }),
 
     dom: new Proxy({registry: new Map(), tags: new Map()}, {
         get: (o, key) => (props = {}, children = [], events = {}) => {
@@ -39,7 +43,27 @@ const whatJs = {
             return el;
         }
     }),
-
+    context: new Proxy({_contexts: {}}, {
+        get: function(whatProxy, contextName) {
+            whatProxy._contexts[contextName] ??= new Proxy({name: contextName, actions: new Map(), subscribers: new Map(),
+                data: whatJs.objProxy({}, context),
+                expose: (fnKey, fn, data={}) => context.actions.set(fnKey,{fn, data}) || (() => {context.actions.delete(fnKey)}),
+                utilize: actionKey => context.actions.get(actionKey),
+                subscribe: (id, fn) => context.subscribers.set(id, new WeakRef(fn))
+            },{
+                get: (invokerContext, prop) => {
+                    if(prop in invokerContext) return invokerContext[prop];
+                    let {fn, data} = invokerContext.actions.get(prop);
+                    return fn ? new Proxy(fn, {
+                        apply: (l, m, args) =>
+                            (typeof args[0] === 'function') ? args[0].apply({},[fn, data]) : fn.apply({}, [...args, data])}) : Reflect.get(...arguments);
+                },
+                set: (target, key, value) => (key === 'data') ? target[key] = whatJs.objProxy(value, context) : target[key] = value
+            });
+            let context = whatProxy._contexts[contextName];
+            return context;
+        }
+    }),
     model: new Proxy({_models: {},
         _makeModel: function(inputData, parent=false) {
             let schema = {}; let validation = {}; let subscribers = []; let data;
@@ -84,3 +108,6 @@ const whatJs = {
         set: (whatProxy, modelName, modelData) => whatProxy._models[modelName] = whatProxy._makeModel(modelData)
     })
 };
+
+
+export default {...whatJs}
