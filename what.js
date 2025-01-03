@@ -1,86 +1,107 @@
-const whatJs = {
-    isInsert: child => ["string","boolean","number"].includes(typeof child),
-    isObject: obj => typeof obj === 'object' && !Array.isArray(obj), isObj: obj => typeof obj === 'object',
-    addChild: (el, child) => whatJs.isInsert(child) ? el.insertAdjacentHTML("beforeend", child) : el.appendChild(child),
-    isInput: node => ["INPUT", "TEXTAREA", "SELECT"].includes(node.nodeName),
-    checkInsertable: arg => (arg instanceof Array) || (arg instanceof Element) || whatJs.isInsert(arg),
+const isInsert = child => ["string", "boolean", "number"].includes(typeof child);
+const isObject = obj => typeof obj === 'object' && !Array.isArray(obj);
+const isObj = obj => typeof obj === 'object';
+const isFunc = obj => typeof obj === 'function';
+const addChild = (el, child) => isInsert(child) ? el.appendChild(document.createTextNode(child)) : el.appendChild(child);
+const replaceOrAppend = (parentEl, child) => parentEl?.firstChild?.replaceWith(child) || parentEl.appendChild(child);
+const isInput = node => ["INPUT", "TEXTAREA", "SELECT"].includes(node.nodeName);
+const checkInsertable = arg => (arg instanceof Array) || (arg instanceof Element) || isInsert(arg);
+const id = (() => {
+    let currentId = 0;
+    return () => currentId++;
+})();
 
-    dom: new Proxy({registry: new Map(), tags: new Map()}, {
-        get: (o, key) => (props = {}, children = [], events = {}) => {
-            if(key === 'query') return document.getElementById(props) ?? document.querySelectorAll(props).length === 1 ?
-                document.querySelector(props) : Array.from(document.querySelectorAll(props));
-            if(key === 'register') return o.registry.set(props.name, props);
-            if(key === 'tag') return o.tags.set(props, [children, events]);
-            let el = document.createElement(key);
-            if(props?.tags) {let [attrs, evts] = o.tags.get(props.tags); Object.assign(props, attrs); Object.assign(events, evts); }
-            if (whatJs.checkInsertable(props)) events = children, children = props;
-            else Object.keys(props).filter(attr => !['disabled', 'checkbox', 'wait','rerender', 'tags']
-                .includes(attr) && typeof props[attr] !== 'object').forEach(attr => el.setAttribute(attr, props[attr]));
+let componentRegistry = new Map();
+let components = new Map();
+let contexts = new Map();
 
-            if(props.modelkey && props.model && whatJs.isInput(el))
-                el.addEventListener('input', evt => {
-                    let processedValue = el.getAttribute('type') === 'checkbox' ? evt.target.checked : evt.target.value;
-                    props.model[props.modelkey] = processedValue;
-                    if(model?.props?.failedFields.includes(props.modelkey)) {
-                        props?.updateError?.(el, props.modelkey, props.model, processedValue);
-                        props?.errorClass && el.classList.add(props.errorClass);
-                    }
-                    else props?.updateSuccess?.(el, props.modelkey, props.model);
-                });
+function getComponent(type, props={}) {
+    let component = components.get(props?.id);
+    if(!component) {
+        component = new (componentRegistry.get(type))(props);
+        component.state = createState(component.state || {}, () => component?.rerender?.());
+        component.id = id();
+        components.set(props?.id || component.id, component);
+    }
+    return component;
+}
 
-            if(props.rerender && props.model) props.model.subscribe(
-                updateData => document.body.contains(el.parentNode) && el.parentNode.replaceChildren(props.rerender(updateData)));
+function registerComponent(component) {
+    component.prototype.useContexts = function(ctxs) {
+        let comp = this;
+        return ctxs.map(ctx => {
+            let _ctx = contexts.get(ctx.name) ?? new ctx();
+            _ctx.components = (_ctx?.components || []).concat([comp]);
+            _ctx.state = createState(_ctx.state || {}, () => _ctx.components.forEach(cmp => cmp?.rerender?.()))
+            _ctx?.onJoin?.(comp);
+            contexts.set(ctx.name, ctx);
+            return _ctx;
+        });
+    }
+    componentRegistry.set(component.name, component);
+}
 
-            props?.wait?.().then(props?.waitSuccess, props?.waitError).then(result => result && el.replaceChildren(result));
-            for(let eventName in events) el.addEventListener(eventName, (e) => events[eventName](e, el));
-            if(props?.render) whatJs.dom.query(props.render)[(props?.append ? 'appendChild' : 'replaceChildren')](el);
-            if(o.registry.has(key)) return el.appendChild(o.registry.get(key)(children)).parentElement;
-            Array.isArray(children) ? children.forEach(child => whatJs.addChild(el, child)) : whatJs.addChild(el, children);
-            return el;
-        }
-    }),
+const dom = new Proxy({}, {
+    get: (o, key) => (props={}, children={}, events={}) => {
+        let el = document.createElement(key);
+        if(checkInsertable(props)) events = children, children = props;
+        else if(!componentRegistry.has(key)) Object.keys(props).filter(attr => typeof props[attr] !== 'object').forEach(
+            attr => ['checked', 'disabled'].includes(attr) ? el[attr] = props[attr] : el.setAttribute(attr, props[attr])
+        );
+        for(let eventName in events) el.addEventListener(eventName, e => events[eventName](e, el));
+        if(componentRegistry.has(key)) {
+            let component = getComponent(key, props);
+            component.rerender = () => replaceOrAppend(el, component?.render([].concat(children)));
+            component.rerender();
+        } else [].concat(children).forEach(child => addChild(el, child));
+        return el;
+    }
+});
 
-    model: new Proxy({_models: {},
-        _makeModel: function(inputData, parent=false) {
-            let schema = {}; let validation = {}; let subscribers = []; let data;
-            if(!whatJs.isObj(inputData)) return inputData;
-            else data = structuredClone(inputData);
-        
-            let proxyObj = new Proxy(data, {
-                get: (target, key) => {
-                    if(key === 'validation') return validation;
-                    if(key === '_validate') return () => {
-                        let modelValid = true;
-                        function validateObj(obj, schema) {
-                            let validationObj = {};
-                            for(let [key, val] of Object.entries(schema)) {
-                                let result = typeof val === 'function' ? val(obj?.[key] || target) : validateObj(obj[key], val);
-                                if(result === false && !key.startsWith('_')) modelValid = false;
-                                validationObj[key] = result;
-                            }
-                            return validationObj;
-                        }
-                        let result = validateObj(target, schema);
-                        validation = {modelValid, ...result};
-                        return result;
-                    }
-                    if(key === 'subscribe') return (updateFn) => typeof updateFn === 'function' ? subscribers.push(new WeakRef(updateFn)) : subscribers.push(...updateFn);
-                    return target[key];
-                },
-                set: (target, key, value) => {
-                    if(key === 'schema') return schema = value;
-                    target[key] = whatJs.isObj(value) ? whatJs.model._makeModel(value, parent || proxyObj) : value;
-                    if(whatJs.isObj(value)) target[key].subscribe(subscribers);
-                    subscribers.forEach(subscriber => subscriber.deref()?.(target, key) || subscribers.splice(1, subscribers.indexOf(subscriber)));
-                    return (parent || proxyObj)._validate();
+function createState(obj, setFn) {
+
+    function prox(data) {
+        return new Proxy(data, {
+            get: (target, key) => isObj(target[key]) ? prox(target[key]) : isFunc(target[key]) ? target[key]() : target[key],
+            set: (target, key, value) => {
+                if(target[key] !== value) {
+                    target?.rerenders?.includes(key) && setFn(key);
+                    return target[key] = value;
                 }
-            });
-            
-            Object.keys(data).forEach(key => proxyObj[key] = whatJs.model._makeModel(data[key], parent || proxyObj));
-            return proxyObj;
-        }
-    }, {
-        get: (whatProxy, modelName) => modelName.startsWith('_') ? whatProxy[modelName] : whatProxy._models?.[modelName] || false,
-        set: (whatProxy, modelName, modelData) => whatProxy._models[modelName] = whatProxy._makeModel(modelData)
-    })
-};
+                return true;
+            }
+        });
+    }
+    return prox(obj);
+}
+
+function Counter() {
+    let [ok] = this.useContexts([CounterContext]);
+    
+    this.state = {
+        num: 0,
+        rerenders: ['num']
+    };
+
+    this.render = function(eles) {
+        return dom.div([
+            dom.span(this.state.num),
+            dom.button('increase', {
+                click: () => {this.state.num++;}
+            })
+        ]);
+    };
+}
+
+function CounterContext() {
+
+    this.state = {
+        allAreOne: () => this.components.every(cmpt => cmpt.num === 1)
+    };
+}
+
+registerComponent(Counter);
+
+document.body.appendChild(
+    dom.Counter()
+)
